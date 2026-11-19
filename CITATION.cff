@@ -1,6 +1,7 @@
 cff-version: 1.2.0
 message: "If you use CONTINUITY in research or software, please cite it as follows."
-title: "CONTINUITY: Python Durable Workflow Recovery for AI Agents"
+title: "CONTINUITY: Durable Python Workflow Engine for AI Agents"
+abstract: "Crash-safe durable workflow execution for Python AI agents, with policy-driven recovery, causal event logs, and SQLite, PostgreSQL, or Redis storage."
 version: 0.8.0
 authors:
   - family-names: Mankotia

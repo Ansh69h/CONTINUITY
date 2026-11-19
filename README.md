@@ -1,37 +1,38 @@
-# CONTINUITY: Python Durable Workflow Recovery for AI Agents
+# CONTINUITY: Durable Python Workflow Engine for AI Agents
 
 [![CI](https://github.com/Ansh69h/CONTINUITY/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Ansh69h/CONTINUITY/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-orange.svg)](LICENSE)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-0%20required-brightgreen.svg)](#storage-and-optional-integrations)
-[![Verification](https://img.shields.io/badge/release%20gate-10%2C000%20trials%20passed-success.svg)](#formal-safety-invariants--chaos-verification)
+[![Verification](https://img.shields.io/badge/release%20gate-10%2C000%20trials%20passed-success.svg)](#safety-invariants--reliability-testing)
 [![Type Checked](https://img.shields.io/badge/typing-PEP%20561-blueviolet.svg)](continuity/py.typed)
 
-**CONTINUITY is an ultra-lightweight, zero-dependency Python runtime for durable workflow execution and crash recovery.** Designed for AI agents, autonomous pipelines, and distributed tasks that interact with LLMs, APIs, databases, and microservices.
+**Build long-running Python agents that can recover, resume, and handle retries safely.**
 
-When your process dies mid-execution—due to a machine restart, out-of-memory kill (`SIGKILL`), unhandled exception, network timeout, or lost HTTP acknowledgement—CONTINUITY seamlessly resumes from where it left off, reusing committed outputs and applying deterministic recovery policies to incomplete steps.
+CONTINUITY is an embedded durable workflow engine for AI agents, automation, and distributed jobs. It records causal progress, reuses committed outputs, and applies explicit recovery rules after process crashes, timeouts, or lost acknowledgements.
+
+- **Resume after failure:** Continue from a durable SQLite WAL event log.
+- **Retry with clear rules:** Declare whether a step is pure, idempotent, compensatable, or irreversible.
+- **Protect external side effects:** Reconcile uncertain calls, compensate when possible, or stop for review.
+- **Scale storage when needed:** Use SQLite by default, with optional PostgreSQL and Redis backends.
+- **Start with no required dependencies:** The core runtime uses the Python standard library.
 
 ---
 
 ## Why CONTINUITY?
 
-Building reliable AI agents and long-running pipelines usually forces a difficult trade-off:
-1. **Full-blown distributed workflow engines (e.g., Temporal, Cadence):** Require separate server clusters, daemons, dedicated infrastructure, and complex operational overhead.
-2. **Ad-hoc retry loops & checkpoint dicts:** Miss edge cases like lost acknowledgements, split-brain executions, non-idempotent duplicate charges, and in-flight crashes.
+Long-running agents face two common failure modes: a service can process a request even when its response is lost, and a process can stop between an external side effect and its checkpoint. A plain retry loop may repeat work; a hand-built checkpoint often lacks enough context to decide what is safe.
 
-CONTINUITY bridges this gap: **embedded, zero-infrastructure durable execution in pure standard-library Python**, powered by SQLite WAL causal logging, atomic step leasing, and a formal side-effect recovery engine.
+CONTINUITY persists workflow progress locally and uses each step's declared side-effect class to choose how to recover. The default SQLite WAL store needs no separate server; PostgreSQL and Redis are available for distributed deployments.
 
-### How CONTINUITY Compares
+### Durable Workflow Features
 
-| Feature | CONTINUITY | Temporal / Cadence | LangGraph Checkpointing | Celery / RQ |
-| :--- | :---: | :---: | :---: | :---: |
-| **External Server Required** | **No (Embedded)** | Yes (Server Cluster) | No (Embedded) | Yes (Broker + DB) |
-| **Required Dependencies** | **0 (Standard Library)** | Heavy Client SDK | Heavy (LangChain) | Redis / RabbitMQ |
-| **Storage Options** | SQLite WAL, Postgres, Redis | Postgres / Cassandra | SQLite / Memory | Redis / RabbitMQ |
-| **Side-Effect Taxonomy** | `PURE`, `IDEMPOTENT`, `COMPENSATABLE`, `IRREVERSIBLE` | Activity Retry Policies | Manual Node Handling | Retry backoff |
-| **External Reconciliation** | **Built-in First-Class** | Manual Workflow Code | None | None |
-| **Formal Invariants Checked** | **Yes (7 Invariants)** | No (Platform SLA) | No | No |
-| **Deterministic Chaos Gate** | **10,000 Trial Simulation** | Integration Tests | Unit Tests | Unit Tests |
+| Workflow need | CONTINUITY approach |
+| :--- | :--- |
+| Resume completed work | Persist committed outputs in a causal event log and reuse them on replay. |
+| Recover uncertain side effects | Declare a step pure, idempotent, compensatable, or irreversible; reconcile or stop when state is uncertain. |
+| Run locally or across workers | Start with embedded SQLite WAL, then add PostgreSQL or Redis storage when needed. |
+| Keep setup small | The core package uses the Python standard library; integrations are optional extras. |
 
 ---
 
@@ -86,18 +87,18 @@ Workflows interact with the outside world in fundamentally different ways. CONTI
 
 ### Installation
 
-Install via pip (zero dependencies required):
+Install the current project directly from GitHub:
 
 ```bash
-pip install continuity-runtime
+python -m pip install "git+https://github.com/Ansh69h/CONTINUITY.git"
 ```
 
-Or clone and install in development mode:
+Or clone it and install the development tools:
 
 ```bash
 git clone https://github.com/Ansh69h/CONTINUITY.git
 cd CONTINUITY
-pip install -e ".[dev]"
+python -m pip install -e ".[dev]"
 ```
 
 ### Basic Step Execution with SQLite WAL
@@ -205,9 +206,9 @@ CONTINUITY includes built-in local stores and adapters for distributed stores:
 - Zero operational dependencies.
 
 ### 2. PostgreSQL Store (Distributed)
-Install the postgres extra:
+From the repository checkout, install the PostgreSQL extra:
 ```bash
-pip install "continuity-runtime[postgres]"
+python -m pip install ".[postgres]"
 ```
 ```python
 import psycopg
@@ -220,9 +221,9 @@ store.ensure_schema()
 - Table prefix sanitization and concurrency mapping.
 
 ### 3. Redis Store (Distributed)
-Install the redis extra:
+From the repository checkout, install the Redis extra:
 ```bash
-pip install "continuity-runtime[redis]"
+python -m pip install ".[redis]"
 ```
 ```python
 import redis
@@ -235,9 +236,9 @@ store = RedisCausalStore(client, namespace="continuity")
 
 ---
 
-## Formal Safety Invariants & Chaos Verification
+## Safety Invariants & Reliability Testing
 
-CONTINUITY is verified against **7 formal safety invariants**:
+CONTINUITY checks **7 safety invariants** across its event log and recovery paths:
 
 1. **INV-1: Monotonicity & Parent Integrity** — Strictly contiguous `1..N` sequence numbers with valid causal parent references.
 2. **INV-2: Intent-Before-Effect Ordering** — Every `STEP_STARTED` or `STEP_COMMITTED` must be preceded by a matching `STEP_INTENT`.
@@ -249,7 +250,7 @@ CONTINUITY is verified against **7 formal safety invariants**:
 
 ### The 10,000-Trial Release Gate
 
-Run the full verification suite locally:
+Run the full test and reliability suite locally:
 
 ```bash
 python -W error::ResourceWarning tests/test_runner_unittest.py
@@ -288,7 +289,7 @@ If you use CONTINUITY in academic research or engineering systems, please cite i
 ```bibtex
 @software{mankotia2026continuity,
   author = {Mankotia, Aryan Dev Singh},
-  title = {CONTINUITY: Python Durable Workflow Recovery for AI Agents},
+  title = {CONTINUITY: Durable Python Workflow Engine for AI Agents},
   version = {0.8.0},
   url = {https://github.com/Ansh69h/CONTINUITY},
   license = {Apache-2.0}

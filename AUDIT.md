@@ -45,9 +45,14 @@ https://github.com/Ansh69h/CONTINUITY. GitHub's About section uses this
 description and topic set:
 
 ```text
-Description: Python durable workflow engine and crash recovery runtime for AI agents and automation. Idempotent retries, causal event logs, SQLite WAL, PostgreSQL, and Redis.
+Description: Crash-safe durable workflow engine for Python AI agents. Resume after failures with policy-driven retries, causal event logs, and SQLite, PostgreSQL, or Redis storage.
 Topics: agent-runtime, ai-agents, automation, crash-recovery, crash-safe, distributed-systems, durable-execution, durable-workflows, fault-tolerance, idempotency, postgresql, python, python-library, redis, sqlite, workflow-automation, workflow-engine, workflow-orchestration, workflow-recovery, workflow-runtime
 ```
+
+The Apache 2.0 license file includes the copyright notice requested for project
+inventor Aryan Dev Singh Mankotia. The package has not been published to PyPI;
+the README therefore gives GitHub installation instructions rather than an
+unavailable PyPI install command.
 
 GitHub repository topics can help people discover projects by purpose, subject,
 and language. Search ranking is not guaranteed.
@@ -75,7 +80,7 @@ Verified on this PC with Python 3.14.3:
 
 ```text
 python -W error::ResourceWarning tests/test_runner_unittest.py
-16 tests passed, including the 10,000-trial release gate and long-step lease
+19 tests passed, including the 10,000-trial release gate and long-step lease
 renewal regression.
 python -m compileall -q continuity tests
 passed
@@ -87,7 +92,7 @@ Built and installed locally in `.venv`:
 
 ```text
 dist/continuity_runtime-0.8.0-py3-none-any.whl
-SHA256: 565b361f6b51097b7abdd7e0d73ca5106b046c0a869bf9dadefff59443b36304
+SHA256: 8db237cf166b51cdbee416c786a864bc1337dd9acf1da7aa1e9900f914850b8e
 ```
 
 The wheel smoke test imported `continuity` from `.venv` outside the source tree

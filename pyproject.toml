@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "continuity-runtime"
 version = "0.8.0"
-description = "Python durable workflow engine and crash recovery runtime for AI agents and automation. Idempotent retries, causal event logs, SQLite WAL, PostgreSQL, and Redis."
+description = "Crash-safe durable workflow engine for Python AI agents. Resume after failures with policy-driven retries, causal event logs, and SQLite, PostgreSQL, or Redis storage."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
