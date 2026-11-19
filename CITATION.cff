@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use CONTINUITY in research or software, please cite it as follows."
+title: "CONTINUITY: Python Durable Workflow Recovery for AI Agents"
+version: 0.8.0
+authors:
+  - family-names: Mankotia
+    given-names: Aryan Dev Singh
+repository-code: "https://github.com/Ansh69h/CONTINUITY"
+license: Apache-2.0

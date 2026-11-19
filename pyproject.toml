@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "continuity-runtime"
+version = "0.8.0"
+description = "Python durable workflow recovery runtime for AI agents, automation, and distributed jobs."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [{name = "Aryan Dev Singh Mankotia"}]
+keywords = [
+    "python",
+    "durable-workflows",
+    "workflow-recovery",
+    "crash-recovery",
+    "ai-agents",
+    "idempotency",
+    "fault-tolerance",
+    "distributed-systems",
+    "sqlite",
+    "postgresql",
+    "redis",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
+]
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/Ansh69h/CONTINUITY"
+Issues = "https://github.com/Ansh69h/CONTINUITY/issues"
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.1"]
+redis = ["redis>=5.0"]
+dev = ["pytest>=7.4", "pytest-asyncio>=0.23"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["continuity*"]
+exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
