@@ -8,7 +8,7 @@ SEVEN_INVARIANTS: Dict[str, str] = {
     "INV-1": "Causal Log Monotonicity & Parent Integrity — Strictly contiguous 1..N sequence numbers with valid causal parent references.",
     "INV-2": "Intent-Before-Effect Ordering — Every STEP_STARTED or STEP_COMMITTED must be preceded by a matching STEP_INTENT.",
     "INV-3": "Committed Output Immutability & Single-Commit — Once STEP_COMMITTED is recorded for a step_id, output cannot mutate and no duplicate commits or re-executions may occur.",
-    "INV-4": "Irreversible Side-Effect Safety — An IRREVERSIBLE step never executes more than once without external reconciliation proof.",
+    "INV-4": "Irreversible Side-Effect Safety — An IRREVERSIBLE retry requires external reconciliation proof or a durable authorized operator approval.",
     "INV-5": "Compensatable Crash Recovery Discipline — A COMPENSATABLE step with an uncommitted STEP_STARTED cannot retry until compensated or reconciled.",
     "INV-6": "Idempotency Key Stability — All events belonging to the same step_id within a run carry an identical idempotency_key.",
     "INV-7": "Bounded Recovery Termination — No step exceeds configured max_attempts without halting/escalating.",
@@ -47,6 +47,7 @@ class InvariantChecker:
         step_idem_keys: Dict[str, str] = {}
         step_side_effects: Dict[str, SideEffectClass] = {}
         reconciled_retry_authorized: Dict[str, bool] = {}
+        operator_retry_authorized: Dict[str, bool] = {}
 
         for idx, ev in enumerate(events):
             expected_seq = idx + 1
@@ -115,6 +116,10 @@ class InvariantChecker:
                 if ev.payload.get("action") == "RECONCILE_EXTERNAL":
                     reconciled_retry_authorized[ev.step_id] = True
 
+            elif ev.event_type == EventType.RECOVERY_APPROVED:
+                if ev.payload.get("approved") is True:
+                    operator_retry_authorized[ev.step_id] = True
+
             elif ev.event_type == EventType.STEP_INTENT:
                 if ev.step_id in step_committed:
                     violations.append(
@@ -140,6 +145,8 @@ class InvariantChecker:
                                 description=f"COMPENSATABLE step {ev.step_id} retried without completing compensation or reconciliation.",
                             )
                         )
+                    if uncommitted_starts > step_comp_committed.get(ev.step_id, 0):
+                        reconciled_retry_authorized[ev.step_id] = False
                 step_intents[ev.step_id] = step_intents.get(ev.step_id, 0) + 1
 
             elif ev.event_type == EventType.STEP_STARTED:
@@ -168,7 +175,10 @@ class InvariantChecker:
                 step_started[ev.step_id] = step_started.get(ev.step_id, 0) + 1
 
                 if ev.side_effect == SideEffectClass.IRREVERSIBLE and step_started[ev.step_id] > 1:
-                    if not reconciled_retry_authorized.get(ev.step_id, False):
+                    if not (
+                        reconciled_retry_authorized.get(ev.step_id, False)
+                        or operator_retry_authorized.get(ev.step_id, False)
+                    ):
                         violations.append(
                             InvariantViolation(
                                 invariant_id="INV-4",
@@ -179,7 +189,9 @@ class InvariantChecker:
                                 description=f"IRREVERSIBLE step {ev.step_id} started {step_started[ev.step_id]} times without reconciliation.",
                             )
                         )
+                if ev.side_effect == SideEffectClass.IRREVERSIBLE:
                     reconciled_retry_authorized[ev.step_id] = False
+                    operator_retry_authorized[ev.step_id] = False
 
             elif ev.event_type == EventType.STEP_FAILED:
                 step_failed[ev.step_id] = step_failed.get(ev.step_id, 0) + 1

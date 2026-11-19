@@ -9,7 +9,7 @@
 
 **Build long-running Python agents that can recover, resume, and handle retries safely.**
 
-CONTINUITY is an embedded durable workflow engine for AI agents, automation, and distributed jobs. It records causal progress, reuses committed outputs, and applies explicit recovery rules after process crashes, timeouts, or lost acknowledgements.
+CONTINUITY is a dependency-light Python durable workflow engine for AI agents, automation, and distributed jobs. It records versioned causal progress, reuses committed outputs, and applies explicit recovery rules after process crashes, timeouts, or lost acknowledgements. It provides durable step execution and recovery primitives; it is not a workflow scheduler or distributed transaction coordinator.
 
 - **Resume after failure:** Continue from a durable SQLite WAL event log.
 - **Retry with clear rules:** Declare whether a step is pure, idempotent, compensatable, or irreversible.
@@ -180,7 +180,7 @@ from continuity import ContinuityRuntime, SQLiteCausalStore, HttpBridge, SideEff
 
 store = SQLiteCausalStore("bridge.db")
 runtime = ContinuityRuntime(store=store, run_id="order-job-901")
-bridge = HttpBridge(runtime=runtime, timeout=5.0)
+bridge = HttpBridge(runtime=runtime, timeout=5.0, allowed_hosts=["api.payments.com"])
 
 # Executes an irreversible payment with automatic reconciliation if network drops
 response = bridge.request(
@@ -194,6 +194,8 @@ response = bridge.request(
 )
 ```
 
+The HTTP bridge requires HTTP or HTTPS, rejects embedded URL credentials, supports an optional exact-host allowlist (checked after redirects too), and limits response bodies to 1 MiB by default. Add every intended reconciliation and compensation host to `allowed_hosts`.
+
 ---
 
 ## Storage Backends
@@ -201,7 +203,7 @@ response = bridge.request(
 CONTINUITY includes built-in local stores and adapters for distributed stores:
 
 ### 1. SQLite WAL Store (Default / Embedded)
-- Crash-safe across process `SIGKILL` and sudden power loss.
+- Durable local storage configured with SQLite WAL and `synchronous=FULL`; actual durability still depends on the host filesystem, operating system, and storage device.
 - Configured with `PRAGMA journal_mode=WAL`, `PRAGMA synchronous=FULL`, and `PRAGMA busy_timeout=30000`.
 - Zero operational dependencies.
 
@@ -217,8 +219,8 @@ from continuity import PostgresCausalStore
 store = PostgresCausalStore(conn_factory=lambda: psycopg.connect("postgresql://user:pass@localhost/db"))
 store.ensure_schema()
 ```
-- Atomic conditional upserts with `RETURNING worker_id`.
-- Table prefix sanitization and concurrency mapping.
+- Fenced leases with monotonically increasing tokens and append-time owner checks.
+- Schema setup migrates v0.8 event and lease tables. CI includes service-backed tests; validate your own failover, backup, and recovery configuration before production use.
 
 ### 3. Redis Store (Distributed)
 From the repository checkout, install the Redis extra:
@@ -232,7 +234,20 @@ from continuity import RedisCausalStore
 client = redis.Redis.from_url("redis://localhost:6379/0")
 store = RedisCausalStore(client, namespace="continuity")
 ```
-- Atomic Lua CAS scripts for sequence validation, lease renewal, and atomic owner release.
+- Lua scripts atomically acquire, renew, and release fenced leases and validate the token while appending events.
+- New Redis keys use a run hash slot for Redis Cluster. Stop v0.8 writers during key migration because those workers do not enforce fencing tokens.
+
+## Optional Framework Adapters
+
+Install only the adapter you use; the runtime core remains dependency-free:
+
+```powershell
+python -m pip install -e "integrations[langgraph]"
+python -m pip install -e "integrations[openai-agents]"
+python -m pip install -e "integrations[fastapi]"
+```
+
+The separate `continuity-integrations` package includes a generic callable wrapper, a LangGraph node wrapper, a local OpenAI Agents SDK function-tool wrapper, and an authorization-hook-based FastAPI router. These adapters wrap local step execution. LangGraph retains its own checkpointer, the Agents SDK retains its own session/run state, and FastAPI authentication remains application-owned. See [integrations/README.md](integrations/README.md) and its examples for version ranges and limitations.
 
 ---
 
@@ -243,21 +258,21 @@ CONTINUITY checks **7 safety invariants** across its event log and recovery path
 1. **INV-1: Monotonicity & Parent Integrity** — Strictly contiguous `1..N` sequence numbers with valid causal parent references.
 2. **INV-2: Intent-Before-Effect Ordering** — Every `STEP_STARTED` or `STEP_COMMITTED` must be preceded by a matching `STEP_INTENT`.
 3. **INV-3: Committed Output Immutability** — Once `STEP_COMMITTED` is recorded, output cannot mutate; duplicate commits are forbidden.
-4. **INV-4: Irreversible Side-Effect Safety** — An `IRREVERSIBLE` step never executes more than once without verified external reconciliation proof.
+4. **INV-4: Irreversible Retry Authorization** — An `IRREVERSIBLE` step may retry only after verified external reconciliation or durable authorized operator approval; `max_attempts` still bounds execution.
 5. **INV-5: Compensatable Crash Recovery Discipline** — A `COMPENSATABLE` step with an uncommitted start cannot retry until compensated or reconciled.
 6. **INV-6: Idempotency Key Stability** — All events belonging to the same `step_id` carry an identical idempotency key.
 7. **INV-7: Bounded Recovery Termination** — No step exceeds configured `max_attempts` without halting/escalating safely.
 
 ### The 10,000-Trial Release Gate
 
-Run the full test and reliability suite locally:
+Run the full pytest and reliability suite locally:
 
 ```bash
-python -W error::ResourceWarning tests/test_runner_unittest.py
+python -W error::ResourceWarning -m pytest -q
 ```
 
 The test harness runs:
-- **10,000-Trial Randomized Chaos Simulation:** Injects randomized faults (crashes mid-step, timeouts, lost acknowledgements) with zero invariant violations.
+- **10,000-Trial Randomized Model Campaign:** Injects randomized faults and checks the model with sampled SQLite runs. It is not 10,000 live database trials or a formal correctness proof.
 - **Process-Kill Verification:** Spawns a real child process that mutates external files and calls `os._exit(137)` before commit, testing recovery.
 - **Multi-Worker Contention:** 12 concurrent workers contending on the same SQLite WAL database step.
 - **Adversarial HTTP Mock:** Real HTTP server injecting lost acknowledgements, duplicate requests, and 503s.
@@ -266,7 +281,7 @@ The test harness runs:
 
 ## OpenTelemetry & APM Traces
 
-Export execution spans to any OTLP-compatible collector (Jaeger, Grafana Tempo, Datadog):
+Export workflow and step spans to any OTLP-compatible collector (Jaeger, Grafana Tempo, Datadog). Spans use lifecycle timestamps; raw payloads and identifying attributes are omitted by default.
 
 ```python
 from continuity import export_otlp_traces
@@ -274,6 +289,21 @@ from continuity import export_otlp_traces
 events = store.get_events(runtime.run_id)
 status_code = export_otlp_traces(events, endpoint="http://localhost:4318/v1/traces")
 ```
+
+Set `include_sensitive_attributes=True` only when the collector is approved for run IDs, step IDs, and step names. Trace/span IDs are deterministic and still link repeated exports of the same run. Idempotency keys, event arguments, and outputs are never added to telemetry spans.
+
+## Local CLI
+
+The `continuity` command can list runs, inspect events, show recovery decisions, verify the seven recorded-history invariants, and invoke an application handler through the runtime planner:
+
+```bash
+continuity runs list --database workflow.db
+continuity runs inspect --database workflow.db --run-id invoice-run-2042
+continuity runs recoveries --database workflow.db --run-id invoice-run-2042
+continuity runs verify --database workflow.db --run-id invoice-run-2042
+```
+
+Inspection redacts event payloads by default. Use `--include-payload` only when the terminal is safe for stored workflow inputs and outputs. `runs resume` requires an explicit application callable; uncertain irreversible work still escalates unless a configured operator authorization hook records an approval.
 
 ---
 

@@ -24,7 +24,9 @@ def test_real_os_exit_kill_and_persistent_restart_recovery():
             f"sys.path.insert(0, {repo_root!r})\n"
             "from continuity import SQLiteCausalStore, ContinuityRuntime, SideEffectClass\n"
             f"store = SQLiteCausalStore({db_path!r})\n"
-            "rt = ContinuityRuntime(store=store, run_id='kill-test-run', worker_id='victim-worker', lease_ttl=0.05)\n"
+            # Leave enough headroom for the renewal thread under a loaded test runner;
+            # this test covers abrupt process death, not sub-100ms lease scheduling.
+            "rt = ContinuityRuntime(store=store, run_id='kill-test-run', worker_id='victim-worker', lease_ttl=2.0)\n"
             "def charge_customer(amount):\n"
             f"    with open({ext_ledger!r}, 'a') as f:\n"
             "        f.write(f'CHARGED:{amount}\\n')\n"
@@ -43,7 +45,7 @@ def test_real_os_exit_kill_and_persistent_restart_recovery():
         )
         proc = subprocess.run([sys.executable, "-c", child_code], capture_output=True, text=True)
         assert proc.returncode == 137, f"Expected 137, got {proc.returncode}, stderr={proc.stderr}"
-        time.sleep(0.06)
+        time.sleep(2.05)
 
         with open(ext_ledger, "r") as f:
             lines = f.read().strip().splitlines()
