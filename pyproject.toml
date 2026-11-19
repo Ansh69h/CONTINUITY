@@ -5,20 +5,27 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "continuity-runtime"
 version = "0.8.0"
-description = "Python durable workflow recovery runtime for AI agents, automation, and distributed jobs."
+description = "Python durable workflow engine and crash recovery runtime for AI agents and automation. Idempotent retries, causal event logs, SQLite WAL, PostgreSQL, and Redis."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
 authors = [{name = "Aryan Dev Singh Mankotia"}]
 keywords = [
     "python",
+    "python-library",
     "durable-workflows",
     "durable-execution",
-    "workflow-recovery",
     "workflow-engine",
+    "workflow-runtime",
+    "workflow-orchestration",
+    "workflow-recovery",
+    "workflow-automation",
     "crash-recovery",
+    "crash-safe",
     "ai-agents",
+    "agent-runtime",
     "llm-agents",
+    "automation",
     "idempotency",
     "fault-tolerance",
     "event-sourcing",

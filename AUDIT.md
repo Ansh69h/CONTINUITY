@@ -36,20 +36,24 @@ parent `releases` directory for comparison.
   `payload` into the idempotency key and execution step.
 - Added `continuity/py.typed` (PEP 561) type marker for IDE and type checker compatibility.
 
-## GitHub discovery metadata prepared
+## GitHub discovery metadata applied
 
 The local README, package description and keywords, author metadata, and
 `CITATION.cff` now use accurate workflow-recovery search terms and credit Aryan
-Dev Singh Mankotia as inventor. Apply this description and topic set in GitHub's
-repository About settings after the repository is created:
+Dev Singh Mankotia as inventor. The public repository is available at
+https://github.com/Ansh69h/CONTINUITY. GitHub's About section uses this
+description and topic set:
 
 ```text
-Description: Python durable workflow recovery runtime for AI agents, automation, and distributed jobs. Crash recovery, idempotent retries, causal event logs, SQLite WAL, PostgreSQL, and Redis.
-Topics: python, workflow-engine, durable-execution, workflow-recovery, crash-recovery, fault-tolerance, ai-agents, agent-runtime, distributed-systems, idempotency, workflow-orchestration, reliability, sqlite, postgresql, redis, automation
+Description: Python durable workflow engine and crash recovery runtime for AI agents and automation. Idempotent retries, causal event logs, SQLite WAL, PostgreSQL, and Redis.
+Topics: agent-runtime, ai-agents, automation, crash-recovery, crash-safe, distributed-systems, durable-execution, durable-workflows, fault-tolerance, idempotency, postgresql, python, python-library, redis, sqlite, workflow-automation, workflow-engine, workflow-orchestration, workflow-recovery, workflow-runtime
 ```
 
 GitHub repository topics can help people discover projects by purpose, subject,
 and language. Search ranking is not guaranteed.
+
+The initial GitHub Actions CI run passed on the push to `main`:
+https://github.com/Ansh69h/CONTINUITY/actions/runs/44524493697
 
 ## Remaining risks
 
@@ -62,8 +66,8 @@ and language. Search ranking is not guaranteed.
 - The 10,000-trial release gate is a deterministic randomized simulation. It is
   useful regression coverage, but does not prove correctness against every
   external system or production failure mode.
-- Only Python 3.14.3 was available for local verification. The added CI matrix
-  targets Python 3.10 through 3.14, but has not run on GitHub Actions yet.
+- Only Python 3.14.3 was available for local verification. The GitHub Actions
+  Python 3.10 through 3.14 matrix passed on the initial push.
 
 ## Local verification
 
@@ -87,5 +91,5 @@ SHA256: 565b361f6b51097b7abdd7e0d73ca5106b046c0a869bf9dadefff59443b36304
 ```
 
 The wheel smoke test imported `continuity` from `.venv` outside the source tree
-and completed a sample step with result `42`. Nothing has been uploaded to
-GitHub.
+and completed a sample step with result `42`. The project is synced to the
+public GitHub repository, and its initial CI run passed.
