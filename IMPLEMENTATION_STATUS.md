@@ -32,6 +32,7 @@ Status snapshot for the v0.8 codebase while the production-readiness branch is u
 
 - CodeRabbit's final local review raised 18 issues. Eight have been corrected in this branch and exercised by regression tests. Ten remain for follow-up; one is major: FastAPI's async inspection endpoints still call synchronous store reads on the event loop.
 - The remaining minor items cover soak CLI input validation, signal shutdown handling and checkpoint snapshots; timing and cleanup in PostgreSQL tests; synchronization in a Redis migration test; adapter installation instructions; Docker readiness instructions; and fencing-counter restart durability documentation.
+- Draft PR #1 is open against `main`. GitHub Actions run #4 passed all Python matrix, PostgreSQL/Redis service, and adapter jobs; the PR remains a draft.
 - This is a draft readiness review, not a release certification. Upstream Redis 7 CI verification passed in run #4; independent security review and long-duration soak evidence remain pending.
 
 ## Not yet available or not verified
