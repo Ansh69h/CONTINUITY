@@ -1,0 +1,37 @@
+name: Bug report
+description: Report a reproducible problem in CONTINUITY.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include credentials, private payloads, customer data, or production idempotency keys. For a security vulnerability, follow [SECURITY.md](https://github.com/Ansh69h/CONTINUITY/blob/main/SECURITY.md) instead of opening a public issue.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the behavior and the behavior you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Provide the smallest safe code sample and steps to reproduce.
+      render: python
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Environment
+      description: CONTINUITY, Python, backend, and framework versions.
+      placeholder: "CONTINUITY 0.8.0; Python 3.12; SQLite"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized error or logs
+      description: Remove secrets, identifiers, and private payloads before posting.

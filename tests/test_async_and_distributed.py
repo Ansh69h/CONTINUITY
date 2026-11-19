@@ -71,5 +71,5 @@ def test_otlp_trace_export_payload():
     assert step_one(10) == 11
     payload = build_otlp_payload(store.get_events("otlp-run"))
     spans = payload["resourceSpans"][0]["scopeSpans"][0]["spans"]
-    assert len(spans) == 3
-    assert spans[0]["name"] == "step_one:STEP_INTENT"
+    assert len(spans) == 2
+    assert spans[1]["name"] == "continuity.step"

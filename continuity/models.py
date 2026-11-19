@@ -5,6 +5,9 @@ from typing import Any, Dict, List, Optional
 import time
 
 
+CURRENT_EVENT_SCHEMA_VERSION = 1
+
+
 class EventType(str, Enum):
     STEP_INTENT = "STEP_INTENT"
     STEP_STARTED = "STEP_STARTED"
@@ -13,6 +16,7 @@ class EventType(str, Enum):
     COMPENSATION_INTENT = "COMPENSATION_INTENT"
     COMPENSATION_COMMITTED = "COMPENSATION_COMMITTED"
     RECOVERY_DECISION = "RECOVERY_DECISION"
+    RECOVERY_APPROVED = "RECOVERY_APPROVED"
     SNAPSHOT_SAVED = "SNAPSHOT_SAVED"
 
 
@@ -67,6 +71,7 @@ class CausalEvent:
     timestamp: float = field(default_factory=time.time)
     worker_id: str = "default-worker"
     attempt: int = 1
+    schema_version: int = CURRENT_EVENT_SCHEMA_VERSION
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -76,6 +81,14 @@ class CausalEvent:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CausalEvent":
+        schema_version = data.get("schema_version", CURRENT_EVENT_SCHEMA_VERSION)
+        if type(schema_version) is not int:
+            raise ValueError("Event schema_version must be an integer")
+        if schema_version != CURRENT_EVENT_SCHEMA_VERSION:
+            raise ValueError(
+                f"Unsupported event schema version {schema_version}; "
+                f"this runtime supports version {CURRENT_EVENT_SCHEMA_VERSION}"
+            )
         return cls(
             run_id=data["run_id"],
             seq=int(data["seq"]),
@@ -90,6 +103,7 @@ class CausalEvent:
             timestamp=float(data.get("timestamp", 0.0)),
             worker_id=data.get("worker_id", "default-worker"),
             attempt=int(data.get("attempt", 1)),
+            schema_version=schema_version,
         )
 
 

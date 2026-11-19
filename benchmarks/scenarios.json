@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "description": "Configured benchmark matrix. These scenarios are definitions, not recorded results.",
+  "scenarios": [
+    {"id": "100w-10k", "workers": 100, "runs": 10000, "contention_groups": 100},
+    {"id": "500w-10k", "workers": 500, "runs": 10000, "contention_groups": 500},
+    {"id": "1000w-10k", "workers": 1000, "runs": 10000, "contention_groups": 1000},
+    {"id": "100w-100k", "workers": 100, "runs": 100000, "contention_groups": 100},
+    {"id": "500w-100k", "workers": 500, "runs": 100000, "contention_groups": 500},
+    {"id": "1000w-100k", "workers": 1000, "runs": 100000, "contention_groups": 1000}
+  ]
+}

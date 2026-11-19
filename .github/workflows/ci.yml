@@ -18,7 +18,59 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install package
-        run: python -m pip install -e .
+      - name: Install package and development dependencies
+        run: python -m pip install -e ".[dev]"
       - name: Run verification suite
-        run: python -W error::ResourceWarning tests/test_runner_unittest.py
+        run: python -W error::ResourceWarning -m pytest -q
+
+  distributed-stores:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: continuity
+          POSTGRES_USER: continuity
+          POSTGRES_PASSWORD: continuity
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U continuity -d continuity"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      CONTINUITY_TEST_POSTGRES_DSN: postgresql://continuity:continuity@localhost:5432/continuity
+      CONTINUITY_TEST_REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package with live store drivers
+        run: python -m pip install -e ".[dev,postgres,redis]"
+      - name: Run live PostgreSQL and Redis tests
+        run: python -m pytest -q tests/integration
+
+  adapters:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install optional framework adapters and test dependencies
+        run: |
+          python -m pip install -e ".[dev]"
+          python -m pip install -e "integrations[all,test]"
+      - name: Test LangGraph, OpenAI Agents SDK, and FastAPI adapters
+        run: python -m pytest -q integrations/tests

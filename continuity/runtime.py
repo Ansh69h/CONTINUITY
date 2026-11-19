@@ -1,14 +1,17 @@
 from __future__ import annotations
 import asyncio
+import contextvars
 import functools
 import hashlib
 import inspect
 import json
 import threading
 import time
+import string
 import urllib.error
 import urllib.request
 import uuid
+from urllib.parse import quote, urljoin, urlparse, urlsplit, urlunparse
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 from .models import (
     CausalEvent,
@@ -19,7 +22,8 @@ from .models import (
     safe_json_default,
 )
 from .planner import RecoveryPlanner, AsyncRecoveryPlanner
-from .storage.base import CausalStoreProtocol, InMemoryCausalStore, OptimisticConcurrencyError
+from .storage.base import CausalStoreProtocol, InMemoryCausalStore, OptimisticConcurrencyError, StepLease
+from .policy import SideEffectPolicy
 
 
 class EscalationRequiredError(RuntimeError):
@@ -37,16 +41,18 @@ class LeaseContentionError(RuntimeError):
 class _LeaseRenewer:
     """Refresh a step lease while its callable or recovery hook is running."""
 
-    def __init__(self, store: CausalStoreProtocol, run_id: str, step_id: str, lease_owner: str, ttl: float) -> None:
+    def __init__(self, store: CausalStoreProtocol, lease: StepLease, ttl: float) -> None:
         self._store = store
-        self._run_id = run_id
-        self._step_id = step_id
-        self._lease_owner = lease_owner
+        self._lease = lease
         self._ttl = ttl
         self._interval = max(min(ttl / 3.0, 1.0), 0.001)
         self._stop_event = threading.Event()
         self._lost_event = threading.Event()
-        self._thread = threading.Thread(target=self._renew, name=f"continuity-lease-{step_id}", daemon=True)
+        self._thread = threading.Thread(
+            target=self._renew,
+            name=f"continuity-lease-{lease.step_id}",
+            daemon=True,
+        )
 
     def start(self) -> None:
         self._thread.start()
@@ -54,16 +60,11 @@ class _LeaseRenewer:
     def _renew(self) -> None:
         while not self._stop_event.wait(self._interval):
             try:
-                renewed = self._store.acquire_step_lease(
-                    self._run_id,
-                    self._step_id,
-                    self._lease_owner,
-                    ttl_seconds=self._ttl,
-                )
+                renewed = self._store.renew_fenced_step_lease(self._lease, ttl_seconds=self._ttl)
             except Exception:
                 self._lost_event.set()
                 return
-            if not renewed:
+            if renewed is None:
                 self._lost_event.set()
                 return
 
@@ -75,7 +76,16 @@ class _LeaseRenewer:
 
     def stop(self) -> None:
         self._stop_event.set()
-        self._thread.join()
+        if self._thread.ident is not None:
+            self._thread.join()
+
+    @property
+    def _step_id(self) -> str:
+        return self._lease.step_id
+
+    @property
+    def _run_id(self) -> str:
+        return self._lease.run_id
 
 
 def _compute_idempotency_key(run_id: str, step_id: str, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> str:
@@ -95,6 +105,7 @@ class ContinuityRuntime:
         worker_id: Optional[str] = None,
         lease_ttl: float = 30.0,
         max_attempts: int = 3,
+        operator_authorizer: Optional[Callable[[str, str, str, Any], Any]] = None,
     ) -> None:
         if lease_ttl <= 0:
             raise ValueError("lease_ttl must be positive")
@@ -105,8 +116,12 @@ class ContinuityRuntime:
         self.worker_id = worker_id or f"worker-{uuid.uuid4().hex[:8]}"
         self.lease_ttl = lease_ttl
         self.max_attempts = max_attempts
+        self.operator_authorizer = operator_authorizer
         self.planner = RecoveryPlanner()
         self.async_planner = AsyncRecoveryPlanner()
+        self._active_lease: contextvars.ContextVar[Optional[StepLease]] = contextvars.ContextVar(
+            f"continuity_lease_{id(self)}", default=None
+        )
 
     def _validate_step_history(
         self,
@@ -175,7 +190,10 @@ class ContinuityRuntime:
                 attempt=attempt,
             )
             try:
-                return self.store.append_event(ev)
+                lease = self._active_lease.get()
+                if lease is None:
+                    raise RuntimeError("Runtime event appends require an active fenced lease")
+                return self.store.append_event(ev, lease=lease)
             except OptimisticConcurrencyError:
                 time.sleep(0.001)
         raise OptimisticConcurrencyError(f"Failed CAS append after {max_cas_retries} retries on run {self.run_id}")
@@ -187,12 +205,25 @@ class ContinuityRuntime:
         step_id: Optional[str] = None,
         step_name: Optional[str] = None,
         side_effect: SideEffectClass = SideEffectClass.PURE,
+        policy: Optional[SideEffectPolicy] = None,
         reconciler: Optional[Callable[[str], Tuple[bool, Any]]] = None,
         compensator: Optional[Callable[[str], Any]] = None,
         before_commit_hook: Optional[Callable[[], None]] = None,
         after_start_hook: Optional[Callable[[], None]] = None,
         **kwargs: Any,
     ) -> Any:
+        if policy is not None:
+            if policy.require_reconciler and reconciler is None:
+                raise ValueError("The selected side-effect policy requires a reconciler")
+            if policy.require_compensator and compensator is None:
+                raise ValueError("The selected side-effect policy requires a compensator")
+            side_effect = policy.side_effect
+        allow_operator_approval = bool(
+            policy is not None
+            and policy.allow_operator_approval
+            and not policy.require_reconciler
+            and not policy.require_compensator
+        )
         s_name = step_name or getattr(fn, "__name__", "anonymous_step")
         s_id = step_id or s_name
         idem_key = _compute_idempotency_key(self.run_id, s_id, args, kwargs)
@@ -207,15 +238,21 @@ class ContinuityRuntime:
             has_reconciler=reconciler is not None,
             has_compensator=compensator is not None,
             max_attempts=self.max_attempts,
+            allow_operator_approval=allow_operator_approval,
         )
         if decision.action == RecoveryAction.REUSE_CACHED:
             return decision.cached_output
 
         lease_owner = f"{self.worker_id}:{uuid.uuid4().hex}"
-        if not self.store.acquire_step_lease(self.run_id, s_id, lease_owner, ttl_seconds=self.lease_ttl):
+        acquire_fenced = getattr(self.store, "acquire_fenced_step_lease", None)
+        if not callable(acquire_fenced):
+            raise TypeError("Storage backend must implement fenced leases before runtime execution")
+        lease = acquire_fenced(self.run_id, s_id, lease_owner, ttl_seconds=self.lease_ttl)
+        if lease is None:
             raise LeaseContentionError(f"Step {s_id} in run {self.run_id} is locked by another worker")
 
-        lease_renewer = _LeaseRenewer(self.store, self.run_id, s_id, lease_owner, self.lease_ttl)
+        lease_context = self._active_lease.set(lease)
+        lease_renewer = _LeaseRenewer(self.store, lease, self.lease_ttl)
         lease_renewer.start()
         try:
             events = self.store.get_events(self.run_id)
@@ -228,6 +265,7 @@ class ContinuityRuntime:
                 has_reconciler=reconciler is not None,
                 has_compensator=compensator is not None,
                 max_attempts=self.max_attempts,
+                allow_operator_approval=allow_operator_approval,
             )
 
             if decision.action == RecoveryAction.REUSE_CACHED:
@@ -342,7 +380,8 @@ class ContinuityRuntime:
             return result
         finally:
             lease_renewer.stop()
-            self.store.release_step_lease(self.run_id, s_id, lease_owner)
+            self._active_lease.reset(lease_context)
+            self.store.release_fenced_step_lease(lease)
 
     async def step_async(
         self,
@@ -351,10 +390,23 @@ class ContinuityRuntime:
         step_id: Optional[str] = None,
         step_name: Optional[str] = None,
         side_effect: SideEffectClass = SideEffectClass.PURE,
+        policy: Optional[SideEffectPolicy] = None,
         reconciler: Optional[Callable[[str], Any]] = None,
         compensator: Optional[Callable[[str], Any]] = None,
         **kwargs: Any,
     ) -> Any:
+        if policy is not None:
+            if policy.require_reconciler and reconciler is None:
+                raise ValueError("The selected side-effect policy requires a reconciler")
+            if policy.require_compensator and compensator is None:
+                raise ValueError("The selected side-effect policy requires a compensator")
+            side_effect = policy.side_effect
+        allow_operator_approval = bool(
+            policy is not None
+            and policy.allow_operator_approval
+            and not policy.require_reconciler
+            and not policy.require_compensator
+        )
         s_name = step_name or getattr(fn, "__name__", "anonymous_async_step")
         s_id = step_id or s_name
         idem_key = _compute_idempotency_key(self.run_id, s_id, args, kwargs)
@@ -369,15 +421,21 @@ class ContinuityRuntime:
             has_reconciler=reconciler is not None,
             has_compensator=compensator is not None,
             max_attempts=self.max_attempts,
+            allow_operator_approval=allow_operator_approval,
         )
         if decision.action == RecoveryAction.REUSE_CACHED:
             return decision.cached_output
 
         lease_owner = f"{self.worker_id}:{uuid.uuid4().hex}"
-        if not self.store.acquire_step_lease(self.run_id, s_id, lease_owner, ttl_seconds=self.lease_ttl):
+        acquire_fenced = getattr(self.store, "acquire_fenced_step_lease", None)
+        if not callable(acquire_fenced):
+            raise TypeError("Storage backend must implement fenced leases before runtime execution")
+        lease = acquire_fenced(self.run_id, s_id, lease_owner, ttl_seconds=self.lease_ttl)
+        if lease is None:
             raise LeaseContentionError(f"Step {s_id} in run {self.run_id} is locked by another worker")
 
-        lease_renewer = _LeaseRenewer(self.store, self.run_id, s_id, lease_owner, self.lease_ttl)
+        lease_context = self._active_lease.set(lease)
+        lease_renewer = _LeaseRenewer(self.store, lease, self.lease_ttl)
         lease_renewer.start()
         try:
             events = self.store.get_events(self.run_id)
@@ -390,6 +448,7 @@ class ContinuityRuntime:
                 has_reconciler=reconciler is not None,
                 has_compensator=compensator is not None,
                 max_attempts=self.max_attempts,
+                allow_operator_approval=allow_operator_approval,
             )
             if decision.action == RecoveryAction.REUSE_CACHED:
                 return decision.cached_output
@@ -502,7 +561,79 @@ class ContinuityRuntime:
             return result
         finally:
             lease_renewer.stop()
-            self.store.release_step_lease(self.run_id, s_id, lease_owner)
+            self._active_lease.reset(lease_context)
+            self.store.release_fenced_step_lease(lease)
+
+    def approve_resume(
+        self,
+        step_id: str,
+        *args: Any,
+        policy: SideEffectPolicy,
+        reason: str,
+        step_name: Optional[str] = None,
+        authorization_context: Any = None,
+        **kwargs: Any,
+    ) -> CausalEvent:
+        """Record one operator-approved retry for a halted step after authorization."""
+        if not policy.allow_operator_approval:
+            raise PermissionError("The selected side-effect policy does not allow operator approval")
+        if policy.require_reconciler or policy.require_compensator:
+            raise PermissionError("Operator approval cannot bypass a policy-required reconciler or compensator")
+        if self.operator_authorizer is None:
+            raise PermissionError("An operator authorizer must be configured before approvals can be recorded")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("A non-empty approval reason is required")
+
+        s_name = step_name or step_id
+        idem_key = _compute_idempotency_key(self.run_id, step_id, args, kwargs)
+        owner_id = f"{self.worker_id}:{uuid.uuid4().hex}"
+        acquire_fenced = getattr(self.store, "acquire_fenced_step_lease", None)
+        if not callable(acquire_fenced):
+            raise TypeError("Storage backend must implement fenced leases before approvals can be recorded")
+        lease = acquire_fenced(self.run_id, step_id, owner_id, ttl_seconds=self.lease_ttl)
+        if lease is None:
+            raise LeaseContentionError(f"Step {step_id} in run {self.run_id} is locked by another worker")
+
+        lease_context = self._active_lease.set(lease)
+        try:
+            events = self.store.get_events(self.run_id)
+            self._validate_step_history(events, step_id, s_name, policy.side_effect, idem_key)
+            decision = self.planner.analyze_step(
+                events=events,
+                step_id=step_id,
+                step_name=s_name,
+                side_effect=policy.side_effect,
+                max_attempts=self.max_attempts,
+            )
+            if decision.action != RecoveryAction.HALT_ESCALATE:
+                raise ValueError("Operator approval is only valid for a step currently halted by the recovery planner")
+            execution_attempts = sum(
+                event.event_type == EventType.STEP_STARTED
+                for event in events
+                if event.step_id == step_id
+            )
+            if execution_attempts >= self.max_attempts:
+                raise ValueError(f"Step {step_id} has exhausted max_attempts={self.max_attempts}")
+            approved_by = self.operator_authorizer(self.run_id, step_id, reason, authorization_context)
+            if approved_by is False or approved_by is None:
+                raise PermissionError("The configured operator authorizer denied this recovery")
+            if not isinstance(approved_by, (str, bool)):
+                raise TypeError("operator_authorizer must return bool or a safe operator identifier string")
+            approver = approved_by.strip() if isinstance(approved_by, str) else "configured-authorizer"
+            if not approver:
+                raise PermissionError("The configured operator authorizer did not identify an approver")
+            return self._append_with_retry(
+                step_id=step_id,
+                step_name=s_name,
+                event_type=EventType.RECOVERY_APPROVED,
+                side_effect=policy.side_effect,
+                idempotency_key=idem_key,
+                payload={"approved": True, "approved_by": approver, "reason": reason.strip()},
+                attempt=execution_attempts + 1,
+            )
+        finally:
+            self._active_lease.reset(lease_context)
+            self.store.release_fenced_step_lease(lease)
 
     def inspect_pending_recoveries(self) -> List[RecoveryDecision]:
         events = self.store.get_events(self.run_id)
@@ -529,6 +660,7 @@ def recoverable(
     step_id: Optional[str] = None,
     reconciler: Optional[Callable[[str], Tuple[bool, Any]]] = None,
     compensator: Optional[Callable[[str], Any]] = None,
+    policy: Optional[SideEffectPolicy] = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(fn)
@@ -539,6 +671,7 @@ def recoverable(
                 step_id=step_id or fn.__name__,
                 step_name=fn.__name__,
                 side_effect=side_effect,
+                policy=policy,
                 reconciler=reconciler,
                 compensator=compensator,
                 **kwargs,
@@ -553,6 +686,7 @@ def recoverable_async(
     step_id: Optional[str] = None,
     reconciler: Optional[Callable[[str], Any]] = None,
     compensator: Optional[Callable[[str], Any]] = None,
+    policy: Optional[SideEffectPolicy] = None,
 ) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
     def decorator(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
         @functools.wraps(fn)
@@ -563,6 +697,7 @@ def recoverable_async(
                 step_id=step_id or fn.__name__,
                 step_name=fn.__name__,
                 side_effect=side_effect,
+                policy=policy,
                 reconciler=reconciler,
                 compensator=compensator,
                 **kwargs,
@@ -574,9 +709,83 @@ def recoverable_async(
 class HttpBridge:
     """Idempotent HTTP execution bridge with automatic Idempotency-Key propagation and reconciliation."""
 
-    def __init__(self, runtime: ContinuityRuntime, timeout: float = 2.0) -> None:
+    def __init__(
+        self,
+        runtime: ContinuityRuntime,
+        timeout: float = 2.0,
+        *,
+        allowed_hosts: Optional[List[str]] = None,
+        max_response_bytes: int = 1_048_576,
+    ) -> None:
+        if max_response_bytes <= 0:
+            raise ValueError("max_response_bytes must be positive")
         self.runtime = runtime
         self.timeout = timeout
+        self.allowed_hosts = frozenset(host.strip().lower() for host in (allowed_hosts or []) if host.strip())
+        self.max_response_bytes = max_response_bytes
+
+    def _validate_url(self, url: str) -> None:
+        parsed = urlsplit(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("HTTP bridge URLs must use http or https and include a hostname")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("HTTP bridge URLs must not include embedded credentials")
+        if self.allowed_hosts and parsed.hostname.lower() not in self.allowed_hosts:
+            raise ValueError(f"HTTP bridge host {parsed.hostname!r} is not in the allowed_hosts list")
+
+    def _open(self, request: urllib.request.Request) -> Any:
+        self._validate_url(request.full_url)
+        bridge = self
+
+        class _RedirectGuard(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                bridge._validate_url(newurl)
+                return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+            def http_error_302(self, req, fp, code, msg, headers):
+                newurl = headers.get("location") or headers.get("uri")
+                if not newurl:
+                    return None
+
+                urlparts = urlparse(newurl)
+                if urlparts.scheme not in ("http", "https", ""):
+                    raise urllib.error.HTTPError(
+                        newurl,
+                        code,
+                        f"{msg} - Redirection to url {newurl!r} is not allowed",
+                        headers,
+                        fp,
+                    )
+                if not urlparts.path and urlparts.netloc:
+                    urlparts = list(urlparts)
+                    urlparts[2] = "/"
+                newurl = quote(urlunparse(urlparts), encoding="iso-8859-1", safe=string.punctuation)
+                newurl = urljoin(req.full_url, newurl)
+                new_request = self.redirect_request(req, fp, code, msg, headers, newurl)
+                if new_request is None:
+                    return None
+
+                if hasattr(req, "redirect_dict"):
+                    visited = new_request.redirect_dict = req.redirect_dict
+                    if (
+                        visited.get(newurl, 0) >= self.max_repeats
+                        or len(visited) >= self.max_redirections
+                    ):
+                        raise urllib.error.HTTPError(req.full_url, code, self.inf_msg + msg, headers, fp)
+                else:
+                    visited = new_request.redirect_dict = req.redirect_dict = {}
+                visited[newurl] = visited.get(newurl, 0) + 1
+
+                fp.close()
+                return self.parent.open(new_request, timeout=req.timeout)
+
+            http_error_301 = http_error_302
+            http_error_303 = http_error_302
+            http_error_307 = http_error_302
+            http_error_308 = http_error_302
+
+        opener = urllib.request.build_opener(_RedirectGuard())
+        return opener.open(request, timeout=self.timeout)
 
     def request(
         self,
@@ -588,6 +797,11 @@ class HttpBridge:
         reconcile_url: Optional[str] = None,
         compensate_url: Optional[str] = None,
     ) -> Dict[str, Any]:
+        self._validate_url(url)
+        if reconcile_url:
+            self._validate_url(reconcile_url)
+        if compensate_url:
+            self._validate_url(compensate_url)
         norm_method = method.upper()
         idem_key = _compute_idempotency_key(
             self.runtime.run_id,
@@ -606,8 +820,11 @@ class HttpBridge:
             }
             req = urllib.request.Request(u, data=body, headers=headers, method=m)
             try:
-                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                    raw = resp.read().decode("utf-8")
+                with self._open(req) as resp:
+                    body = resp.read(self.max_response_bytes + 1)
+                    if len(body) > self.max_response_bytes:
+                        raise ValueError(f"HTTP response exceeds max_response_bytes={self.max_response_bytes}")
+                    raw = body.decode("utf-8")
                     return {"status": resp.status, "body": json.loads(raw) if raw else {}}
             except urllib.error.HTTPError as err:
                 err.close()
@@ -622,9 +839,12 @@ class HttpBridge:
                 method="GET",
             )
             try:
-                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                with self._open(req) as resp:
                     if resp.status == 200:
-                        raw = resp.read().decode("utf-8")
+                        body = resp.read(self.max_response_bytes + 1)
+                        if len(body) > self.max_response_bytes:
+                            raise ValueError(f"HTTP response exceeds max_response_bytes={self.max_response_bytes}")
+                        raw = body.decode("utf-8")
                         return (True, {"status": 200, "body": json.loads(raw) if raw else {}, "reconciled": True})
                     return (False, None)
             except urllib.error.HTTPError as err:
@@ -644,7 +864,7 @@ class HttpBridge:
                 headers={"Content-Type": "application/json", "Idempotency-Key": key},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with self._open(req) as resp:
                 return {"status": resp.status}
 
         return self.runtime.step(

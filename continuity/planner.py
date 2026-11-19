@@ -21,6 +21,7 @@ class RecoveryPlanner:
         has_reconciler: bool = False,
         has_compensator: bool = False,
         max_attempts: int = 3,
+        allow_operator_approval: bool = True,
     ) -> RecoveryDecision:
         step_events = [e for e in events if e.step_id == step_id]
         if not step_events:
@@ -47,7 +48,7 @@ class RecoveryPlanner:
         started_events = [e for e in step_events if e.event_type == EventType.STEP_STARTED]
         failed_events = [e for e in step_events if e.event_type == EventType.STEP_FAILED]
         comp_committed = [e for e in step_events if e.event_type == EventType.COMPENSATION_COMMITTED]
-        attempts_so_far = max([e.attempt for e in step_events], default=1)
+        attempts_so_far = len(started_events)
 
         if attempts_so_far >= max_attempts:
             return RecoveryDecision(
@@ -55,6 +56,22 @@ class RecoveryPlanner:
                 step_name=step_name,
                 action=RecoveryAction.HALT_ESCALATE,
                 reason=f"Exceeded max_attempts ({max_attempts}); escalating safely.",
+                attempt=attempts_so_far + 1,
+            )
+
+        latest_start_seq = max((e.seq for e in started_events), default=0)
+        approved = allow_operator_approval and any(
+            e.event_type == EventType.RECOVERY_APPROVED
+            and e.seq > latest_start_seq
+            and e.payload.get("approved") is True
+            for e in step_events
+        )
+        if approved:
+            return RecoveryDecision(
+                step_id=step_id,
+                step_name=step_name,
+                action=RecoveryAction.REEXECUTE,
+                reason="An authorized operator approved one recovery attempt after reviewing the unresolved effect.",
                 attempt=attempts_so_far + 1,
             )
 
@@ -163,6 +180,7 @@ class AsyncRecoveryPlanner(RecoveryPlanner):
         has_reconciler: bool = False,
         has_compensator: bool = False,
         max_attempts: int = 3,
+        allow_operator_approval: bool = True,
     ) -> RecoveryDecision:
         return self.analyze_step(
             events=events,
@@ -172,4 +190,5 @@ class AsyncRecoveryPlanner(RecoveryPlanner):
             has_reconciler=has_reconciler,
             has_compensator=has_compensator,
             max_attempts=max_attempts,
+            allow_operator_approval=allow_operator_approval,
         )
