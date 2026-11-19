@@ -8,6 +8,7 @@ from .models import (
     RecoveryAction,
     ExecutionRecord,
     InvariantViolation,
+    safe_json_default,
 )
 from .storage.base import CausalStoreProtocol, InMemoryCausalStore, SQLiteCausalStore
 from .storage.backends import PostgresCausalStore, RedisCausalStore
@@ -44,6 +45,7 @@ __all__ = [
     "RecoveryAction",
     "ExecutionRecord",
     "InvariantViolation",
+    "safe_json_default",
     "CausalStoreProtocol",
     "InMemoryCausalStore",
     "SQLiteCausalStore",

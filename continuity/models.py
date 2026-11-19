@@ -31,6 +31,27 @@ class RecoveryAction(str, Enum):
     HALT_ESCALATE = "HALT_ESCALATE"
 
 
+def safe_json_default(obj: Any) -> Any:
+    """Deterministic, fault-tolerant JSON serialization fallback for AI models, dataclasses, and primitives."""
+    if hasattr(obj, "model_dump") and callable(obj.model_dump):
+        return obj.model_dump()
+    if hasattr(obj, "dict") and callable(obj.dict):
+        return obj.dict()
+    if hasattr(obj, "__dataclass_fields__"):
+        return asdict(obj)
+    if hasattr(obj, "isoformat") and callable(obj.isoformat):
+        return obj.isoformat()
+    if isinstance(obj, (set, frozenset)):
+        return sorted(list(obj), key=str)
+    if isinstance(obj, bytes):
+        return obj.decode("utf-8", errors="replace")
+    if isinstance(obj, Enum):
+        return obj.value
+    if hasattr(obj, "__dict__"):
+        return {k: v for k, v in sorted(obj.__dict__.items()) if not k.startswith("_")}
+    return str(obj)
+
+
 @dataclass(frozen=True)
 class CausalEvent:
     run_id: str

@@ -16,6 +16,7 @@ from .models import (
     SideEffectClass,
     RecoveryAction,
     RecoveryDecision,
+    safe_json_default,
 )
 from .planner import RecoveryPlanner, AsyncRecoveryPlanner
 from .storage.base import CausalStoreProtocol, InMemoryCausalStore, OptimisticConcurrencyError
@@ -81,7 +82,7 @@ def _compute_idempotency_key(run_id: str, step_id: str, args: Tuple[Any, ...], k
     canonical = json.dumps(
         {"run_id": run_id, "step_id": step_id, "args": args, "kwargs": kwargs},
         sort_keys=True,
-        default=str,
+        default=safe_json_default,
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:24]
 
@@ -587,18 +588,23 @@ class HttpBridge:
         reconcile_url: Optional[str] = None,
         compensate_url: Optional[str] = None,
     ) -> Dict[str, Any]:
-        # Compute identical key to ContinuityRuntime.step(_do_http) with empty args/kwargs
-        idem_key = _compute_idempotency_key(self.runtime.run_id, step_id, (), {})
+        norm_method = method.upper()
+        idem_key = _compute_idempotency_key(
+            self.runtime.run_id,
+            step_id,
+            (norm_method, url),
+            {"payload_data": payload},
+        )
 
-        def _do_http() -> Dict[str, Any]:
-            body = json.dumps(payload).encode("utf-8") if payload is not None else None
+        def _do_http(m: str, u: str, payload_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+            body = json.dumps(payload_data, default=safe_json_default).encode("utf-8") if payload_data is not None else None
             headers = {
                 "Content-Type": "application/json",
                 "Idempotency-Key": idem_key,
                 "X-Continuity-Run-Id": self.runtime.run_id,
                 "X-Continuity-Step-Id": step_id,
             }
-            req = urllib.request.Request(url, data=body, headers=headers, method=method.upper())
+            req = urllib.request.Request(u, data=body, headers=headers, method=m)
             try:
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                     raw = resp.read().decode("utf-8")
@@ -643,6 +649,9 @@ class HttpBridge:
 
         return self.runtime.step(
             _do_http,
+            norm_method,
+            url,
+            payload_data=payload,
             step_id=step_id,
             step_name=f"http_{method.lower()}",
             side_effect=side_effect,

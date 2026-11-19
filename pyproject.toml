@@ -13,15 +13,22 @@ authors = [{name = "Aryan Dev Singh Mankotia"}]
 keywords = [
     "python",
     "durable-workflows",
+    "durable-execution",
     "workflow-recovery",
+    "workflow-engine",
     "crash-recovery",
     "ai-agents",
+    "llm-agents",
     "idempotency",
     "fault-tolerance",
+    "event-sourcing",
+    "causal-logging",
+    "saga-pattern",
     "distributed-systems",
-    "sqlite",
+    "sqlite-wal",
     "postgresql",
     "redis",
+    "opentelemetry",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -40,7 +47,10 @@ classifiers = [
 dependencies = []
 
 [project.urls]
+Homepage = "https://github.com/Ansh69h/CONTINUITY"
 Repository = "https://github.com/Ansh69h/CONTINUITY"
+Documentation = "https://github.com/Ansh69h/CONTINUITY#readme"
+Changelog = "https://github.com/Ansh69h/CONTINUITY/blob/main/CHANGELOG.md"
 Issues = "https://github.com/Ansh69h/CONTINUITY/issues"
 
 [project.optional-dependencies]
@@ -53,6 +63,10 @@ where = ["."]
 include = ["continuity*"]
 exclude = ["tests*"]
 
+[tool.setuptools.package-data]
+continuity = ["py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+addopts = "-ra --ignore=tests/test_runner_unittest.py"

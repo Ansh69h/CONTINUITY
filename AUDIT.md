@@ -24,6 +24,17 @@ parent `releases` directory for comparison.
   operations now use atomic Lua scripts that compare the current owner.
 - HTTP error responses were left open after handling. They are now closed, and
   the full suite passes with `ResourceWarning` promoted to an error.
+- Non-JSON step outputs (such as `datetime`, `UUID`, dataclasses, sets) crashed
+  the SQLite WAL and distributed stores during `json.dumps()`. The stores now
+  use `safe_json_default`, enabling rich output serialization.
+- Custom objects in step arguments previously serialized memory addresses
+  (`0x...`) in `default=str`, causing false `EscalationRequiredError` input-drift
+  halts across process restarts. `_compute_idempotency_key` now uses deterministic
+  structural serialization.
+- `HttpBridge.request` previously bypassed input drift detection by passing empty
+  arguments to `runtime.step()`. It now properly forwards `method`, `url`, and
+  `payload` into the idempotency key and execution step.
+- Added `continuity/py.typed` (PEP 561) type marker for IDE and type checker compatibility.
 
 ## GitHub discovery metadata prepared
 

@@ -135,3 +135,90 @@ def test_long_step_renews_lease_until_execution_finishes():
 
     assert second_worker.step(slow_effect, step_id="slow-step") == {"execution": 1}
     assert execution_count["value"] == 1
+
+
+def test_datetime_and_dataclass_payload_serialization_in_sqlite():
+    import datetime
+    import tempfile
+    from dataclasses import dataclass
+    from continuity import SQLiteCausalStore
+
+    @dataclass
+    class AnalysisResult:
+        score: float
+        tags: list[str]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = f"{tmpdir}/serialization.db"
+        store = SQLiteCausalStore(db_path)
+        runtime = ContinuityRuntime(store=store, run_id="serial-run")
+
+        now = datetime.datetime(2026, 11, 19, 12, 0, 0)
+        dt_res = runtime.step(lambda: now, step_id="time_step")
+        assert dt_res == now
+
+        data_res = runtime.step(lambda: AnalysisResult(0.98, ["valid", "fast"]), step_id="dataclass_step")
+        assert data_res.score == 0.98
+
+        events = store.get_events("serial-run")
+        assert len(events) == 6
+
+
+def test_custom_object_idempotency_key_stability_across_instances():
+    class TaskConfig:
+        def __init__(self, mode: str, retries: int):
+            self.mode = mode
+            self.retries = retries
+
+    store = InMemoryCausalStore()
+    rt1 = ContinuityRuntime(store=store, run_id="config-run")
+    cfg1 = TaskConfig("production", 3)
+    out1 = rt1.step(lambda cfg: f"ran-{cfg.mode}-{cfg.retries}", cfg1, step_id="configure")
+    assert out1 == "ran-production-3"
+
+    # In a new runtime/process, a newly instantiated object with identical data should match
+    rt2 = ContinuityRuntime(store=store, run_id="config-run")
+    cfg2 = TaskConfig("production", 3)
+    out2 = rt2.step(lambda cfg: f"ran-{cfg.mode}-{cfg.retries}", cfg2, step_id="configure")
+    assert out2 == "ran-production-3"
+
+
+def test_http_bridge_payload_change_halts_for_review():
+    from continuity import HttpBridge
+
+    class MockHttpBridge(HttpBridge):
+        def request(self, step_id, method, url, payload=None, **kwargs):
+            norm_method = method.upper()
+            idem_key = self.runtime._compute_idempotency_key(
+                self.runtime.run_id,
+                step_id,
+                (norm_method, url),
+                {"payload_data": payload},
+            ) if hasattr(self.runtime, "_compute_idempotency_key") else ""
+
+            def _mock_do(m, u, payload_data=None):
+                return {"url": u, "payload": payload_data}
+
+            return self.runtime.step(
+                _mock_do,
+                norm_method,
+                url,
+                payload_data=payload,
+                step_id=step_id,
+                step_name=f"http_{method.lower()}",
+            )
+
+    store = InMemoryCausalStore()
+    rt = ContinuityRuntime(store=store, run_id="http-drift-run")
+    bridge = MockHttpBridge(runtime=rt)
+
+    res1 = bridge.request("call_order", "POST", "https://api.example.com/order", payload={"amount": 100})
+    assert res1 == {"url": "https://api.example.com/order", "payload": {"amount": 100}}
+
+    try:
+        bridge.request("call_order", "POST", "https://api.example.com/order", payload={"amount": 500})
+    except EscalationRequiredError as exc:
+        assert "different inputs" in exc.decision.reason
+    else:
+        raise AssertionError("Expected changing HttpBridge payload to halt instead of returning stale cached data")
+

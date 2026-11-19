@@ -3,7 +3,7 @@ import json
 import re
 import time
 from typing import Any, List
-from ..models import CausalEvent
+from ..models import CausalEvent, safe_json_default
 from .base import OptimisticConcurrencyError
 
 
@@ -79,8 +79,8 @@ class PostgresCausalStore:
                             event.event_type.value,
                             event.side_effect.value,
                             event.idempotency_key,
-                            json.dumps(event.parent_event_ids),
-                            json.dumps(event.payload),
+                            json.dumps(event.parent_event_ids, default=safe_json_default),
+                            json.dumps(event.payload, default=safe_json_default),
                             event.timestamp,
                             event.worker_id,
                             event.attempt,
@@ -226,7 +226,7 @@ class RedisCausalStore:
         return f"{self._ns}:runs"
 
     def append_event(self, event: CausalEvent) -> CausalEvent:
-        serialized = json.dumps(event.to_dict())
+        serialized = json.dumps(event.to_dict(), default=safe_json_default)
         res = self._client.eval(
             self._APPEND_LUA,
             2,

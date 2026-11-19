@@ -5,7 +5,7 @@ import sqlite3
 import threading
 import time
 from typing import Dict, List, Protocol, runtime_checkable
-from ..models import CausalEvent
+from ..models import CausalEvent, safe_json_default
 
 
 @runtime_checkable
@@ -178,8 +178,8 @@ class SQLiteCausalStore:
                         event.event_type.value,
                         event.side_effect.value,
                         event.idempotency_key,
-                        json.dumps(event.parent_event_ids),
-                        json.dumps(event.payload),
+                        json.dumps(event.parent_event_ids, default=safe_json_default),
+                        json.dumps(event.payload, default=safe_json_default),
                         event.timestamp,
                         event.worker_id,
                         event.attempt,
