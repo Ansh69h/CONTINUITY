@@ -84,7 +84,7 @@
 - [ ] Add network restart/reconnection tests against upstream Redis and representative PostgreSQL failover behavior.
 - [ ] Keep fake-cursor and fake-Redis tests as fast unit checks.
 - [x] Add PostgreSQL and upstream Redis jobs with optional extras to CI.
-- [x] Run live PostgreSQL and Redis-compatible service tests locally without Docker. Memurai was used for Redis API compatibility; the upstream Redis CI job remains unverified until the first workflow run.
+- [x] Run live PostgreSQL and Redis-compatible service tests locally without Docker. Memurai was used for Redis API compatibility; upstream Redis 7 and PostgreSQL 16 service tests passed in GitHub Actions run #4.
 
 ## Task 4: Add configurable side-effect policies and auditable operator recovery
 
@@ -177,4 +177,4 @@
 - [ ] Inspect the final complete diff and verify local/remote branch head equality.
 - [ ] Push `engineering/production-readiness` and update the draft PR with the review status. Do not merge.
 - [x] Check CodeMouse availability; no repository installations are connected, so do not grant new access.
-- [x] Record unsupported upstream Redis/failover, network chaos, long soak, and high-scale benchmark gates honestly.
+- [x] Record remaining network chaos, long soak, and high-scale benchmark gates honestly; upstream Redis 7 CI passed in run #4.

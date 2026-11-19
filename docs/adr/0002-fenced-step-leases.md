@@ -1,6 +1,6 @@
 # ADR 0002: Fence lease holders at the append boundary
 
-- **Status:** Implemented; upstream Redis 7 CI verification pending
+- **Status:** Implemented; PostgreSQL 16 and upstream Redis 7 CI verification passed in run #4
 - **Date:** 2026-11-19
 
 ## Context
@@ -15,4 +15,4 @@ The store rejects stale lease tokens at the protected append boundary. This does
 
 ## Consequences
 
-Stores use persistent token counters and migrations, and append checks are atomic in the store transaction or script. Custom store implementations must add fenced lease acquisition, renewal, release, and an `append_event(..., lease=...)` check. Local service tests pass on PostgreSQL 16.16 and Memurai 4.1.7; upstream Redis 7 service verification remains pending in CI. v0.8 does not provide this guarantee.
+Stores use persistent token counters and migrations, and append checks are atomic in the store transaction or script. Custom store implementations must add fenced lease acquisition, renewal, release, and an `append_event(..., lease=...)` check. Local service tests pass on PostgreSQL 16.16 and Memurai 4.1.7; the PostgreSQL 16 and upstream Redis 7 service job passed in GitHub Actions run #4. v0.8 does not provide this guarantee.

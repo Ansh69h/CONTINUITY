@@ -6,7 +6,7 @@ This roadmap describes engineering direction, not a delivery promise. The status
 
 - **Implemented on this branch:** Add an explicit event schema version and transaction-safe SQLite/PostgreSQL migrations while retaining reads of v0.8 records.
 - **Implemented on this branch:** Add durable monotonically increasing fencing tokens and atomically validate a token during event append in each store.
-- **Implemented and locally exercised:** Add PostgreSQL and Redis-compatible service tests for takeover, stale append rejection, migration, and sequence order. GitHub CI also provisions PostgreSQL 16 and Redis 7; its first workflow run is still pending.
+- **Implemented and verified:** Add PostgreSQL and Redis-compatible service tests for takeover, stale append rejection, migration, and sequence order. GitHub Actions run #4 passed the PostgreSQL 16 and upstream Redis 7 service job.
 - **Planned:** Add deterministic tests for clock movement, network partitions, and failure windows not modeled by the current randomized campaign.
 
 ## Integrations and operations

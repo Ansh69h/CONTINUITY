@@ -26,4 +26,4 @@ The library exposes `inspect_pending_recoveries()` and an optional `SideEffectPo
 
 ## Evidence limits
 
-The repository has invariant checks, randomized fault simulations, and local SQLite crash/contention tests. The 10,000-trial campaign is model-based and mostly uses in-memory storage; SQLite is sampled, not used for every trial. PostgreSQL 16.16 and Memurai 4.1.7 service tests passed locally; Memurai is Redis 7.2.11-compatible but is not the upstream Redis server. GitHub CI is configured to verify upstream Redis 7. No external exactly-once guarantee or universal resilience to network and clock failures is claimed.
+The repository has invariant checks, randomized fault simulations, and local SQLite crash/contention tests. The 10,000-trial campaign is model-based and mostly uses in-memory storage; SQLite is sampled, not used for every trial. PostgreSQL 16.16 and Memurai 4.1.7 service tests passed locally; Memurai is Redis 7.2.11-compatible but is not the upstream Redis server. GitHub Actions run #4 passed the upstream Redis 7 service job. No external exactly-once guarantee or universal resilience to network and clock failures is claimed.
